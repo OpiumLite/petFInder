@@ -27,8 +27,6 @@ local Settings = {
 local Advanced = {
     SendStartMessage = true,            -- Отправлять сообщение о запуске
     SendPingOnRare = true,              -- Пинговать @everyone при находке
-    SendPlayerCountInNotification = true, -- Показывать количество игроков в уведомлении
-    ShowPlayerCountInStatus = true,     -- Показывать количество игроков в статусе
     HideGameErrors = true,              -- Скрывать ошибки игры в консоли
     CooldownBetweenNotifications = 3,   -- Задержка между уведомлениями (сек)
     MaxNotificationsPerSession = 100,   -- Максимум уведомлений за сессию
@@ -36,22 +34,46 @@ local Advanced = {
 }
 
 -- ==========================================
--- ПЕРЕХВАТ ОШИБОК (ЧИСТЫЙ КОНСОЛЬ)
+-- ПОЛНАЯ ФИЛЬТРАЦИЯ КОНСОЛИ
 -- ==========================================
 if Advanced.HideGameErrors then
     local oldPrint = print
     local oldWarn = warn
     local oldError = error
     
+    -- Список спам-сообщений для фильтрации
+    local blockedPatterns = {
+        "MutationController",
+        "attempt to index nil",
+        "Size",
+        "Aurora",
+        "Megaphone",
+        "Visualizer",
+        "avg loudness",
+        "peak=",
+        "samples=",
+        "Ref=",
+        "scale",
+        "range",
+        "exp=",
+        "loudness",
+        "Megaphone/Visualizer",
+    }
+    
+    local function shouldBlock(msg)
+        if type(msg) ~= "string" then return false end
+        for _, pattern in ipairs(blockedPatterns) do
+            if msg:find(pattern) then
+                return true
+            end
+        end
+        return false
+    end
+    
     print = function(...)
         local args = {...}
         for i, arg in ipairs(args) do
-            if type(arg) == "string" and (
-                arg:find("MutationController") or
-                arg:find("attempt to index nil") or
-                arg:find("Size") or
-                arg:find("Aurora")
-            ) then
+            if shouldBlock(arg) then
                 return
             end
         end
@@ -61,12 +83,7 @@ if Advanced.HideGameErrors then
     warn = function(...)
         local args = {...}
         for i, arg in ipairs(args) do
-            if type(arg) == "string" and (
-                arg:find("MutationController") or
-                arg:find("attempt to index nil") or
-                arg:find("Size") or
-                arg:find("Aurora")
-            ) then
+            if shouldBlock(arg) then
                 return
             end
         end
@@ -82,9 +99,8 @@ local notificationCount = 0
 local lastNotificationTime = 0
 local foundPetsLog = {}
 local isPaused = false
-local currentPlayerCount = 0
 local startTime = os.time()
-local scriptVersion = "2.2"
+local scriptVersion = "2.5"
 local totalPetsFound = 0
 local errorCount = 0
 
@@ -101,16 +117,6 @@ local function SafeCall(func, ...)
         return nil
     end
     return result
-end
-
--- ==========================================
--- ПОЛУЧЕНИЕ КОЛИЧЕСТВА ИГРОКОВ
--- ==========================================
-local function GetPlayerCount()
-    return SafeCall(function()
-        local players = game:GetService("Players")
-        return #players:GetPlayers()
-    end) or 0
 end
 
 -- ==========================================
@@ -279,26 +285,6 @@ local function GetPetPosition(pet)
 end
 
 -- ==========================================
--- ПОЛУЧЕНИЕ РАССТОЯНИЯ ДО ПЕТА (С ЗАЩИТОЙ)
--- ==========================================
-local function GetDistanceToPet(pet)
-    return SafeCall(function()
-        local player = game.Players.LocalPlayer
-        local character = player and player.Character
-        if not character then return "Unknown" end
-        
-        local pos = GetPetPosition(pet)
-        if not pos then return "Unknown" end
-        
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if not root then return "Unknown" end
-        
-        local distance = (root.Position - pos).Magnitude
-        return string.format("%.1f м", distance)
-    end) or "Unknown"
-end
-
--- ==========================================
 -- СОХРАНЕНИЕ В ФАЙЛ
 -- ==========================================
 local function SaveFoundPet(petInfo, serverLink, jobId)
@@ -306,11 +292,10 @@ local function SaveFoundPet(petInfo, serverLink, jobId)
     
     return SafeCall(function()
         local logEntry = string.format(
-            "[%s] %s | ID: %s | Игроков: %d | Сервер: %s\n",
+            "[%s] %s | ID: %s | Сервер: %s\n",
             os.date("%Y-%m-%d %H:%M:%S"),
             petInfo.Name,
             petInfo.ID,
-            currentPlayerCount,
             jobId
         )
         
@@ -331,10 +316,8 @@ local function SendPetNotification(pet, petInfo, isNew)
     return SafeCall(function()
         local pos = GetPetPosition(pet)
         local posText = pos and string.format("X: %.1f, Y: %.1f, Z: %.1f", pos.X, pos.Y, pos.Z) or "Unknown"
-        local distance = GetDistanceToPet(pet)
         
         local serverLink, jobId = GetServerLink()
-        local playerCount = GetPlayerCount()
         
         local title = isNew and "⭐ НОВЫЙ ЦЕЛЕВОЙ PET ПОЯВИЛСЯ! ⭐" or "⭐ ЦЕЛЕВОЙ PET НАЙДЕН! ⭐"
         local color = 0x00FF00 -- Зеленый
@@ -352,77 +335,48 @@ local function SendPetNotification(pet, petInfo, isNew)
                 inline = true
             },
             {
-                name = "📏 Расстояние",
-                value = distance,
+                name = "📍 Позиция",
+                value = posText,
+                inline = false
+            },
+            {
+                name = "🔗 Ссылка на сервер (TeleportService)",
+                value = "```lua\n" .. serverLink .. "\n```",
+                inline = false
+            },
+            {
+                name = "🆔 Job ID",
+                value = "`" .. jobId .. "`",
+                inline = false
+            },
+            {
+                name = "⏰ Время",
+                value = os.date("%H:%M:%S"),
                 inline = true
             },
-        }
-        
-        -- Добавляем количество игроков если включено
-        if Advanced.SendPlayerCountInNotification then
-            table.insert(fields, {
-                name = "👥 Игроков на сервере",
-                value = string.format("**%d** %s", playerCount, playerCount >= 10 and "🔴" or playerCount >= 5 and "🟡" or "🟢"),
+            {
+                name = "📊 Найдено за сессию",
+                value = tostring(notificationCount + 1),
                 inline = true
-            })
-        end
-        
-        -- Добавляем позицию
-        table.insert(fields, {
-            name = "📍 Позиция",
-            value = posText,
-            inline = false
-        })
-        
-        -- Добавляем ссылку
-        table.insert(fields, {
-            name = "🔗 Ссылка на сервер (TeleportService)",
-            value = "```lua\n" .. serverLink .. "\n```",
-            inline = false
-        })
-        
-        table.insert(fields, {
-            name = "🆔 Job ID",
-            value = "`" .. jobId .. "`",
-            inline = false
-        })
-        
-        table.insert(fields, {
-            name = "⏰ Время",
-            value = os.date("%H:%M:%S"),
-            inline = true
-        })
-        
-        table.insert(fields, {
-            name = "📊 Найдено за сессию",
-            value = tostring(notificationCount + 1),
-            inline = true
-        })
+            }
+        }
         
         local embed = {{
             title = title,
             color = color,
             fields = fields,
             footer = {
-                text = "🎯 Охота на: Golden Dragonfly • Raccoon • Unicorn | 👥 " .. playerCount .. " игроков"
+                text = "🎯 Охота на: Golden Dragonfly • Raccoon • Unicorn"
             },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%S.000Z")
         }}
         
         -- Текстовое сообщение (для мобильных клиентов)
-        local playerCountText = ""
-        if Advanced.SendPlayerCountInNotification then
-            local statusEmoji = playerCount >= 10 and "🔴" or playerCount >= 5 and "🟡" or "🟢"
-            playerCountText = string.format("👥 Игроков: **%d** %s\n", playerCount, statusEmoji)
-        end
-        
         local content = string.format(
             "**%s**\n" ..
             "━━━━━━━━━━━━━━━━━━━━━\n" ..
             "🐰 **%s** ⭐\n" ..
             "🔑 ID: `%s`\n" ..
-            "📏 Расстояние: %s\n" ..
-            "%s" ..
             "━━━━━━━━━━━━━━━━━━━━━\n" ..
             "🔗 **Ссылка на сервер (TeleportService):**\n```lua\n%s\n```\n" ..
             "🆔 **Job ID:** `%s`\n" ..
@@ -430,8 +384,6 @@ local function SendPetNotification(pet, petInfo, isNew)
             title,
             petInfo.Name,
             petInfo.ID,
-            distance,
-            playerCountText,
             serverLink,
             jobId,
             os.date("%H:%M:%S")
@@ -440,7 +392,7 @@ local function SendPetNotification(pet, petInfo, isNew)
         local success = SendToDiscord(content, embed, true)
         
         if success then
-            print(string.format("✅ ОТЛИЧНО! Найден целевой пет: %s | Игроков: %d", petInfo.Name, playerCount))
+            print(string.format("✅ ОТЛИЧНО! Найден целевой пет: %s", petInfo.Name))
             SaveFoundPet(petInfo, serverLink, jobId)
         else
             print(string.format("❌ Не удалось отправить: %s", petInfo.Name))
@@ -553,9 +505,6 @@ local function GetStatus()
         local container = GetPetContainer()
         local containerStatus = container and "✅ Найден" or "❌ Не найден"
         
-        local playerCount = GetPlayerCount()
-        local playerStatus = playerCount >= 10 and "🔴 Много" or playerCount >= 5 and "🟡 Средне" or "🟢 Мало"
-        
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("📊 СТАТУС ТРЕКЕРА v" .. scriptVersion)
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -580,7 +529,6 @@ local function GetStatus()
         print(string.format("  ⚠️ Поймано ошибок: %d", errorCount))
         print("")
         print("🔹 СЕРВЕР:")
-        print(string.format("  👥 Игроков: %d %s", playerCount, playerStatus))
         local serverLink, jobId = GetServerLink()
         print(string.format("  🆔 Job ID: %s", jobId))
         print("")
@@ -591,7 +539,6 @@ local function GetStatus()
         print("")
         print("🔹 НАСТРОЙКИ:")
         print(string.format("  🔔 Пинг при находке: %s", Advanced.SendPingOnRare and "✅ Вкл" or "❌ Выкл"))
-        print(string.format("  👥 Показывать игроков: %s", Advanced.SendPlayerCountInNotification and "✅ Вкл" or "❌ Выкл"))
         print(string.format("  💾 Сохранение в лог: %s", Advanced.SaveToFile and "✅ Вкл" or "❌ Выкл"))
         print(string.format("  ⏳ Кулдаун: %d сек", Advanced.CooldownBetweenNotifications))
         print(string.format("  📊 Лимит уведомлений: %d", Advanced.MaxNotificationsPerSession))
@@ -621,17 +568,6 @@ local function StartMonitoring()
             print("❌ Не удалось запустить мониторинг")
             return
         end
-        
-        spawn(function()
-            while task.wait(10) do
-                SafeCall(function()
-                    currentPlayerCount = GetPlayerCount()
-                    if Advanced.ShowPlayerCountInStatus then
-                        print(string.format("👥 Игроков на сервере: %d", currentPlayerCount))
-                    end
-                end)
-            end
-        end)
         
         container.ChildAdded:Connect(function(child)
             task.wait(0.5)
@@ -667,12 +603,6 @@ end
 
 getgenv().targets = function()
     PrintTargetList()
-end
-
-getgenv().players = function()
-    local count = GetPlayerCount()
-    print(string.format("👥 Игроков на сервере: %d", count))
-    return count
 end
 
 getgenv().pause = function()
@@ -724,7 +654,6 @@ getgenv().help = function()
     print("  📊 СТАТУС:")
     print("    status()    - Полная информация о трекере")
     print("    targets()   - Список целевых петов")
-    print("    players()   - Количество игроков на сервере")
     print("")
     print("  🎮 УПРАВЛЕНИЕ:")
     print("    pause()     - Пауза/возобновление")
@@ -749,14 +678,12 @@ end
 print("===============================================")
 print("🐰 WILDPET TRACKER - ОХОТА НА ЦЕЛЕВЫХ ПЕТОВ")
 print("🎯 Golden Dragonfly • Raccoon • Unicorn")
-print("📌 Версия " .. scriptVersion .. " (с защитой от ошибок)")
+print("📌 Версия " .. scriptVersion .. " (полная фильтрация)")
 print("===============================================")
 
 local serverLink, jobId = GetServerLink()
-local playerCount = GetPlayerCount()
 
 print("🆔 Job ID: " .. jobId)
-print("👥 Игроков на сервере: " .. playerCount)
 print("🔗 Ссылка (TeleportService):")
 print(serverLink)
 
@@ -773,11 +700,9 @@ if Advanced.SendStartMessage then
     local startMessage = string.format(
         "🚀 **Охота на целевых петов запущена!**\n" ..
         "🎯 **Цели:** Golden Dragonfly • Raccoon • Unicorn\n" ..
-        "👥 **Игроков на сервере:** %d\n" ..
         "🆔 **Job ID:** `%s`\n" ..
         "🔗 **Ссылка на сервер (TeleportService):**\n```lua\n%s\n```\n" ..
         "⏰ Время: %s",
-        playerCount,
         jobId,
         serverLink,
         os.date("%H:%M:%S")
@@ -798,7 +723,7 @@ print("===============================================")
 print("✅ ЗАПУЩЕНО!")
 print("")
 print("🎯 Охота на: Golden Dragonfly, Raccoon, Unicorn")
-print("🛡 Защита от ошибок: ВКЛЮЧЕНА")
+print("🛡 Полная фильтрация спама: ВКЛЮЧЕНА")
 print("")
 print("📖 ВВЕДИ help() ДЛЯ СПИСКА ВСЕХ КОМАНД")
 print("===============================================")
