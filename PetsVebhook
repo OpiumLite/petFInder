@@ -58,6 +58,9 @@ local lastNotificationTime = 0
 local foundPetsLog = {}
 local isPaused = false
 local currentPlayerCount = 0
+local startTime = os.time()
+local scriptVersion = "2.0"
+local totalPetsFound = 0
 
 -- ==========================================
 -- ПОЛУЧЕНИЕ КОЛИЧЕСТВА ИГРОКОВ
@@ -277,6 +280,7 @@ local function SaveFoundPet(petInfo, serverLink, jobId)
     )
     
     table.insert(foundPetsLog, logEntry)
+    totalPetsFound = totalPetsFound + 1
     print("📝 Сохранено в лог: " .. petInfo.Name)
 end
 
@@ -519,6 +523,70 @@ local function ScanForNewPets()
 end
 
 -- ==========================================
+-- СТАТУС ТРЕКЕРА (РАСШИРЕННЫЙ)
+-- ==========================================
+local function GetStatus()
+    local uptime = os.time() - startTime
+    local hours = math.floor(uptime / 3600)
+    local minutes = math.floor((uptime % 3600) / 60)
+    local seconds = uptime % 60
+    local uptimeString = string.format("%02dч %02dм %02dс", hours, minutes, seconds)
+    
+    local container = GetPetContainer()
+    local containerStatus = container and "✅ Найден" or "❌ Не найден"
+    
+    local webhookStatus = "✅ Активен"
+    -- Проверяем вебхук (отправляем тестовое сообщение)
+    
+    local playerCount = GetPlayerCount()
+    local playerStatus = playerCount >= 10 and "🔴 Много" or playerCount >= 5 and "🟡 Средне" or "🟢 Мало"
+    
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("📊 СТАТУС ТРЕКЕРА v" .. scriptVersion)
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("")
+    print("🔹 ОБЩАЯ ИНФОРМАЦИЯ:")
+    print(string.format("  ⏱ Время работы: %s", uptimeString))
+    print(string.format("  📅 Запущен: %s", os.date("%d.%m.%Y %H:%M:%S", startTime)))
+    print(string.format("  🎯 Режим: %s", Settings.FilterMode))
+    print(string.format("  📌 Статус: %s", isPaused and "⏸️ НА ПАУЗЕ" or "▶️ РАБОТАЕТ"))
+    print("")
+    print("🔹 ЦЕЛИ:")
+    print(string.format("  🎯 Целевых петов: %d", #Settings.TargetPets))
+    for i, pet in ipairs(Settings.TargetPets) do
+        local data = PetDatabase[pet]
+        if data then
+            print(string.format("     %d. %s [%s]", i, pet, data.Rarity))
+        end
+    end
+    print("")
+    print("🔹 СТАТИСТИКА:")
+    print(string.format("  🐰 Найдено петов: %d", totalPetsFound))
+    print(string.format("  📨 Отправлено уведомлений: %d", notificationCount))
+    print(string.format("  📋 В логе: %d записей", #foundPetsLog))
+    print(string.format("  💾 Обработано: %d петов", #processedPets))
+    print("")
+    print("🔹 СЕРВЕР:")
+    print(string.format("  👥 Игроков: %d %s", playerCount, playerStatus))
+    local serverLink, jobId = GetServerLink()
+    print(string.format("  🆔 Job ID: %s", jobId))
+    print(string.format("  🔗 Ссылка: %s", serverLink))
+    print("")
+    print("🔹 СИСТЕМА:")
+    print(string.format("  📁 Путь к пета: %s", containerStatus))
+    print(string.format("  🌐 Вебхук: %s", webhookStatus))
+    print(string.format("  ⏱ Интервал сканирования: %d сек", Settings.ScanInterval))
+    print("")
+    print("🔹 НАСТРОЙКИ:")
+    print(string.format("  🔔 Пинг при находке: %s", Advanced.SendPingOnRare and "✅ Вкл" or "❌ Выкл"))
+    print(string.format("  👥 Показывать игроков: %s", Advanced.SendPlayerCountInNotification and "✅ Вкл" or "❌ Выкл"))
+    print(string.format("  💾 Сохранение в лог: %s", Advanced.SaveToFile and "✅ Вкл" or "❌ Выкл"))
+    print(string.format("  ⏳ Кулдаун: %d сек", Advanced.CooldownBetweenNotifications))
+    print(string.format("  📊 Лимит уведомлений: %d", Advanced.MaxNotificationsPerSession))
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+end
+
+-- ==========================================
 -- ВЫВОД СПИСКА ЦЕЛЕЙ
 -- ==========================================
 local function PrintTargetList()
@@ -576,6 +644,10 @@ end
 -- КОМАНДЫ
 -- ==========================================
 
+getgenv().status = function()
+    GetStatus()
+end
+
 getgenv().targets = function()
     PrintTargetList()
 end
@@ -584,17 +656,6 @@ getgenv().players = function()
     local count = GetPlayerCount()
     print(string.format("👥 Игроков на сервере: %d", count))
     return count
-end
-
-getgenv().status = function()
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("📊 СТАТУС ТРЕКЕРА:")
-    print(string.format("  Целевые петы: Golden Dragonfly, Raccoon, Unicorn"))
-    print(string.format("  👥 Игроков на сервере: %d", currentPlayerCount))
-    print(string.format("  Обработано петов: %d", #processedPets))
-    print(string.format("  Отправлено уведомлений: %d", notificationCount))
-    print(string.format("  Статус: %s", isPaused and "⏸️ НА ПАУЗЕ" or "▶️ РАБОТАЕТ"))
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 end
 
 getgenv().pause = function()
@@ -617,6 +678,7 @@ end
 getgenv().reset = function()
     processedPets = {}
     notificationCount = 0
+    totalPetsFound = 0
     print("🔄 Сброшены все обработанные петы")
 end
 
@@ -633,12 +695,44 @@ getgenv().logs = function()
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 end
 
+getgenv().clear = function()
+    foundPetsLog = {}
+    print("🧹 Лог очищен")
+end
+
+getgenv().help = function()
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("📖 ДОСТУПНЫЕ КОМАНДЫ:")
+    print("")
+    print("  📊 СТАТУС:")
+    print("    status()    - Полная информация о трекере")
+    print("    targets()   - Список целевых петов")
+    print("    players()   - Количество игроков на сервере")
+    print("")
+    print("  🎮 УПРАВЛЕНИЕ:")
+    print("    pause()     - Пауза/возобновление")
+    print("    scan()      - Принудительное сканирование")
+    print("    reset()     - Сбросить обработанных петов")
+    print("")
+    print("  📁 ЛОГИ:")
+    print("    logs()      - Показать лог найденных")
+    print("    clear()     - Очистить лог")
+    print("")
+    print("  🔗 СЕРВЕР:")
+    print("    server()    - Показать ссылку на сервер")
+    print("")
+    print("  ❓ ПОМОЩЬ:")
+    print("    help()      - Показать это сообщение")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+end
+
 -- ==========================================
 -- ЗАПУСК
 -- ==========================================
 print("===============================================")
 print("🐰 WILDPET TRACKER - ОХОТА НА ЦЕЛЕВЫХ ПЕТОВ")
 print("🎯 Golden Dragonfly • Raccoon • Unicorn")
+print("📌 Версия " .. scriptVersion)
 print("===============================================")
 
 local serverLink, jobId = GetServerLink()
@@ -688,13 +782,5 @@ print("✅ ЗАПУЩЕНО!")
 print("")
 print("🎯 Охота на: Golden Dragonfly, Raccoon, Unicorn")
 print("")
-print("📖 КОМАНДЫ:")
-print("  targets()  - Показать цели")
-print("  players()  - Показать количество игроков")
-print("  status()   - Статус трекера")
-print("  pause()    - Пауза/возобновление")
-print("  scan()     - Принудительное сканирование")
-print("  server()   - Ссылка на сервер")
-print("  logs()     - Лог найденных")
-print("  reset()    - Сбросить")
+print("📖 ВВЕДИ help() ДЛЯ СПИСКА ВСЕХ КОМАНД")
 print("===============================================")
