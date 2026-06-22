@@ -1,7 +1,7 @@
 -- ==========================================
 -- WILDPET TRACKER PRO - GROW A GARDEN 2
 -- ОХОТА ТОЛЬКО НА: Golden Dragonfly, Raccoon, Unicorn
--- С КНОПКОЙ КОПИРОВАНИЯ ССЫЛКИ
+-- С ОТОБРАЖЕНИЕМ КОЛИЧЕСТВА ИГРОКОВ
 -- ==========================================
 
 local WebhookURL = "https://discordapp.com/api/webhooks/1518530893327765585/jnl8tGzwBfwFu3A-LhYIQ9-SCz-1331NuM29heRuJVFKbmuOTfgO5BtJP4M-CpdRLHRJ"
@@ -28,6 +28,8 @@ local Settings = {
 local Advanced = {
     SendStartMessage = true,            -- Отправлять сообщение о запуске
     SendPingOnRare = true,              -- Пинговать @everyone при находке
+    SendPlayerCountInNotification = true, -- Показывать количество игроков в уведомлении
+    ShowPlayerCountInStatus = true,     -- Показывать количество игроков в статусе
     RarePets = {                        -- ВСЕ целевые петы считаются редкими
         "Golden Dragonfly",
         "Raccoon",
@@ -55,6 +57,17 @@ local notificationCount = 0
 local lastNotificationTime = 0
 local foundPetsLog = {}
 local isPaused = false
+local currentPlayerCount = 0
+
+-- ==========================================
+-- ПОЛУЧЕНИЕ КОЛИЧЕСТВА ИГРОКОВ
+-- ==========================================
+local function GetPlayerCount()
+    local players = game:GetService("Players")
+    local count = #players:GetPlayers()
+    currentPlayerCount = count
+    return count
+end
 
 -- ==========================================
 -- ПОЛУЧЕНИЕ ССЫЛКИ НА СЕРВЕР
@@ -67,7 +80,6 @@ local function GetServerLink()
         return "Job ID не найден", "Неизвестно"
     end
     
-    -- Формируем ссылку как в твоем примере
     local serverLink = string.format(
         "game:GetService('TeleportService'):TeleportToPlaceInstance(%d, '%s', game.Players.LocalPlayer)",
         placeId,
@@ -129,7 +141,7 @@ local function GetPetContainer()
 end
 
 -- ==========================================
--- ОТПРАВКА В DISCORD С КНОПКОЙ КОПИРОВАНИЯ
+-- ОТПРАВКА В DISCORD
 -- ==========================================
 local function SendToDiscord(message, embedData, pingRare)
     local http = game:GetService("HttpService")
@@ -256,10 +268,11 @@ local function SaveFoundPet(petInfo, serverLink, jobId)
     if not Advanced.SaveToFile then return end
     
     local logEntry = string.format(
-        "[%s] %s | ID: %s | Сервер: %s\n",
+        "[%s] %s | ID: %s | Игроков: %d | Сервер: %s\n",
         os.date("%Y-%m-%d %H:%M:%S"),
         petInfo.Name,
         petInfo.ID,
+        currentPlayerCount,
         jobId
     )
     
@@ -268,7 +281,7 @@ local function SaveFoundPet(petInfo, serverLink, jobId)
 end
 
 -- ==========================================
--- ОТПРАВКА УВЕДОМЛЕНИЯ С КНОПКОЙ КОПИРОВАНИЯ
+-- ОТПРАВКА УВЕДОМЛЕНИЯ С КОЛИЧЕСТВОМ ИГРОКОВ
 -- ==========================================
 local function SendPetNotification(pet, petInfo, isNew)
     if not ShouldTrackPet(petInfo.Name) then
@@ -282,6 +295,7 @@ local function SendPetNotification(pet, petInfo, isNew)
     local petData = GetPetInfo(petInfo.Name)
     
     local serverLink, jobId = GetServerLink()
+    local playerCount = GetPlayerCount()
     
     -- Цвет по редкости
     local color = 0xFF00FF -- Фиолетовый (Мифический)
@@ -289,76 +303,100 @@ local function SendPetNotification(pet, petInfo, isNew)
     
     local title = isNew and "⭐ НОВЫЙ ЦЕЛЕВОЙ PET ПОЯВИЛСЯ! ⭐" or "⭐ ЦЕЛЕВОЙ PET НАЙДЕН! ⭐"
     
-    -- Embed с полями
+    -- Формируем поля для embed
+    local fields = {
+        {
+            name = "🐰 Имя пета",
+            value = petInfo.Name .. " ⭐",
+            inline = true
+        },
+        {
+            name = "Редкость",
+            value = petData.Rarity,
+            inline = true
+        },
+        {
+            name = "💰 Цена",
+            value = petData.Price .. " шекелей",
+            inline = true
+        },
+        {
+            name = "✨ Способность",
+            value = petData.Ability,
+            inline = false
+        },
+        {
+            name = "🔑 ID пета",
+            value = "`" .. petInfo.ID .. "`",
+            inline = true
+        },
+        {
+            name = "📏 Расстояние",
+            value = distance,
+            inline = true
+        },
+    }
+    
+    -- Добавляем количество игроков если включено
+    if Advanced.SendPlayerCountInNotification then
+        table.insert(fields, {
+            name = "👥 Игроков на сервере",
+            value = string.format("**%d** %s", playerCount, playerCount >= 10 and "🔴" or playerCount >= 5 and "🟡" or "🟢"),
+            inline = true
+        })
+    end
+    
+    -- Добавляем позицию
+    table.insert(fields, {
+        name = "📍 Позиция",
+        value = posText,
+        inline = false
+    })
+    
+    -- Добавляем ссылку
+    table.insert(fields, {
+        name = "🔗 Ссылка на сервер (TeleportService)",
+        value = "```lua\n" .. serverLink .. "\n```",
+        inline = false
+    })
+    
+    table.insert(fields, {
+        name = "🆔 Job ID",
+        value = "`" .. jobId .. "`",
+        inline = false
+    })
+    
+    table.insert(fields, {
+        name = "⏰ Время",
+        value = os.date("%H:%M:%S"),
+        inline = true
+    })
+    
+    table.insert(fields, {
+        name = "📊 Найдено за сессию",
+        value = tostring(notificationCount + 1),
+        inline = true
+    })
+    
     local embed = {{
         title = title,
         color = color,
-        fields = {
-            {
-                name = "🐰 Имя пета",
-                value = petInfo.Name .. " ⭐",
-                inline = true
-            },
-            {
-                name = "Редкость",
-                value = petData.Rarity,
-                inline = true
-            },
-            {
-                name = "💰 Цена",
-                value = petData.Price .. " шекелей",
-                inline = true
-            },
-            {
-                name = "✨ Способность",
-                value = petData.Ability,
-                inline = false
-            },
-            {
-                name = "🔑 ID пета",
-                value = "`" .. petInfo.ID .. "`",
-                inline = true
-            },
-            {
-                name = "📏 Расстояние",
-                value = distance,
-                inline = true
-            },
-            {
-                name = "📍 Позиция",
-                value = posText,
-                inline = false
-            },
-            {
-                name = "🔗 Ссылка на сервер (TeleportService)",
-                value = "```lua\n" .. serverLink .. "\n```",
-                inline = false
-            },
-            {
-                name = "🆔 Job ID",
-                value = "`" .. jobId .. "`",
-                inline = false
-            },
-            {
-                name = "⏰ Время",
-                value = os.date("%H:%M:%S"),
-                inline = true
-            },
-            {
-                name = "📊 Найдено за сессию",
-                value = tostring(notificationCount + 1),
-                inline = true
-            }
-        },
+        fields = fields,
         footer = {
-            text = "🎯 Охота на: Golden Dragonfly • Raccoon • Unicorn"
+            text = "🎯 Охота на: Golden Dragonfly • Raccoon • Unicorn | 👥 " .. playerCount .. " игроков"
         },
         timestamp = os.date("!%Y-%m-%dT%H:%M:%S.000Z")
     }}
     
-    -- Текстовое сообщение (для мобильных клиентов без поддержки embed)
+    -- Текстовое сообщение (для мобильных клиентов)
     local rarityEmoji = "🟣"
     if petData.Rarity == "Супер-редкий" then rarityEmoji = "🔴" end
+    
+    local playerCountText = ""
+    if Advanced.SendPlayerCountInNotification then
+        local statusEmoji = playerCount >= 10 and "🔴" or playerCount >= 5 and "🟡" or "🟢"
+        playerCountText = string.format("👥 Игроков: **%d** %s\n", playerCount, statusEmoji)
+    end
     
     local content = string.format(
         "**%s**\n" ..
@@ -368,6 +406,7 @@ local function SendPetNotification(pet, petInfo, isNew)
         "💰 Цена: **%s** шекелей\n" ..
         "✨ Способность: %s\n" ..
         "📏 Расстояние: %s\n" ..
+        "%s" ..
         "━━━━━━━━━━━━━━━━━━━━━\n" ..
         "🔗 **Ссылка на сервер (TeleportService):**\n```lua\n%s\n```\n" ..
         "🆔 **Job ID:** `%s`\n" ..
@@ -380,6 +419,7 @@ local function SendPetNotification(pet, petInfo, isNew)
         petData.Price,
         petData.Ability,
         distance,
+        playerCountText,
         serverLink,
         jobId,
         os.date("%H:%M:%S")
@@ -388,7 +428,7 @@ local function SendPetNotification(pet, petInfo, isNew)
     local success = SendToDiscord(content, embed, isRare)
     
     if success then
-        print(string.format("✅ ОТЛИЧНО! Найден целевой пет: %s [%s]", petInfo.Name, petData.Rarity))
+        print(string.format("✅ ОТЛИЧНО! Найден целевой пет: %s [%s] | Игроков: %d", petInfo.Name, petData.Rarity, playerCount))
         SaveFoundPet(petInfo, serverLink, jobId)
     else
         print(string.format("❌ Не удалось отправить: %s", petInfo.Name))
@@ -503,6 +543,16 @@ local function StartMonitoring()
         return
     end
     
+    -- Обновляем количество игроков каждые 10 секунд
+    spawn(function()
+        while task.wait(10) do
+            GetPlayerCount()
+            if Advanced.ShowPlayerCountInStatus then
+                print(string.format("👥 Игроков на сервере: %d", currentPlayerCount))
+            end
+        end
+    end)
+    
     container.ChildAdded:Connect(function(child)
         task.wait(0.5)
         if string.match(child.Name, "^" .. Settings.PetPrefix) then
@@ -530,10 +580,17 @@ getgenv().targets = function()
     PrintTargetList()
 end
 
+getgenv().players = function()
+    local count = GetPlayerCount()
+    print(string.format("👥 Игроков на сервере: %d", count))
+    return count
+end
+
 getgenv().status = function()
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("📊 СТАТУС ТРЕКЕРА:")
     print(string.format("  Целевые петы: Golden Dragonfly, Raccoon, Unicorn"))
+    print(string.format("  👥 Игроков на сервере: %d", currentPlayerCount))
     print(string.format("  Обработано петов: %d", #processedPets))
     print(string.format("  Отправлено уведомлений: %d", notificationCount))
     print(string.format("  Статус: %s", isPaused and "⏸️ НА ПАУЗЕ" or "▶️ РАБОТАЕТ"))
@@ -585,7 +642,10 @@ print("🎯 Golden Dragonfly • Raccoon • Unicorn")
 print("===============================================")
 
 local serverLink, jobId = GetServerLink()
+local playerCount = GetPlayerCount()
+
 print("🆔 Job ID: " .. jobId)
+print("👥 Игроков на сервере: " .. playerCount)
 print("🔗 Ссылка (TeleportService):")
 print(serverLink)
 
@@ -602,9 +662,11 @@ if Advanced.SendStartMessage then
     local startMessage = string.format(
         "🚀 **Охота на целевых петов запущена!**\n" ..
         "🎯 **Цели:** Golden Dragonfly • Raccoon • Unicorn\n" ..
+        "👥 **Игроков на сервере:** %d\n" ..
         "🆔 **Job ID:** `%s`\n" ..
         "🔗 **Ссылка на сервер (TeleportService):**\n```lua\n%s\n```\n" ..
         "⏰ Время: %s",
+        playerCount,
         jobId,
         serverLink,
         os.date("%H:%M:%S")
@@ -628,6 +690,7 @@ print("🎯 Охота на: Golden Dragonfly, Raccoon, Unicorn")
 print("")
 print("📖 КОМАНДЫ:")
 print("  targets()  - Показать цели")
+print("  players()  - Показать количество игроков")
 print("  status()   - Статус трекера")
 print("  pause()    - Пауза/возобновление")
 print("  scan()     - Принудительное сканирование")
