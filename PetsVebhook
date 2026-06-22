@@ -11,6 +11,12 @@ local Settings = {
     ScanInterval = 3,
     PetPrefix = "WildPet_",
     ShowCurrentPets = true,
+    -- СПИСОК РАЗРЕШЕННЫХ ПЕТОВ (только эти будут отправляться в Discord)
+    AllowedPets = {
+        "unicorn",
+        "raccon",
+        "dragonfly"
+    }
 }
 
 -- ==========================================
@@ -25,7 +31,6 @@ local function GetServerLink()
         return "Job ID не найден", "Неизвестно"
     end
     
-    -- Формируем ссылку как в твоем примере
     local serverLink = string.format(
         "game:GetService('TeleportService'):TeleportToPlaceInstance(%d, '%s', game.Players.LocalPlayer)",
         placeId,
@@ -136,10 +141,37 @@ local function GetPetPosition(pet)
 end
 
 -- ==========================================
+-- ПРОВЕРКА, РАЗРЕШЕН ЛИ ПЕТ
+-- ==========================================
+
+local function IsPetAllowed(petName)
+    if not petName or petName == "" then
+        return false
+    end
+    
+    -- Приводим к нижнему регистру для сравнения
+    local lowerName = string.lower(petName)
+    
+    for _, allowed in ipairs(Settings.AllowedPets) do
+        if string.lower(allowed) == lowerName then
+            return true
+        end
+    end
+    
+    return false
+end
+
+-- ==========================================
 -- ОТПРАВКА УВЕДОМЛЕНИЯ
 -- ==========================================
 
 local function SendPetNotification(pet, petInfo, isNew)
+    -- ПРОВЕРКА: отправляем только если пет в разрешенном списке
+    if not IsPetAllowed(petInfo.Name) then
+        print(string.format("⏭️ Пропущен (не в списке): %s", petInfo.Name))
+        return
+    end
+    
     local pos = GetPetPosition(pet)
     local posText = pos and string.format("X: %.1f, Y: %.1f, Z: %.1f", pos.X, pos.Y, pos.Z) or "Unknown"
     
@@ -207,8 +239,12 @@ local function SendPetNotification(pet, petInfo, isNew)
         os.date("%H:%M:%S")
     )
     
-    SendToDiscord(content, embed)
-    print(string.format("✅ Отправлено: %s (Job ID: %s)", petInfo.Name, jobId))
+    local success = SendToDiscord(content, embed)
+    if success then
+        print(string.format("✅ Отправлено: %s (Job ID: %s)", petInfo.Name, jobId))
+    else
+        print(string.format("❌ Ошибка отправки: %s", petInfo.Name))
+    end
 end
 
 -- ==========================================
@@ -230,15 +266,20 @@ local function ProcessPet(pet, isNew)
         return
     end
     
-    print(string.format("%s: %s", isNew and "🆕 Новый пет" or "📌 Пет", pet.Name))
-    
     local petInfo = ExtractPetInfo(pet.Name)
-    print(string.format("📊 Имя: %s, ID: %s", petInfo.Name, petInfo.ID))
+    print(string.format("%s: %s (ID: %s)", isNew and "🆕 Новый пет" or "📌 Пет", petInfo.Name, petInfo.ID))
     
-    processedPets[pet] = true
-    pet:SetAttribute("Processed", true)
-    
-    SendPetNotification(pet, petInfo, isNew)
+    -- Проверяем, разрешен ли пет перед добавлением в processedPets
+    if IsPetAllowed(petInfo.Name) then
+        processedPets[pet] = true
+        pet:SetAttribute("Processed", true)
+        SendPetNotification(pet, petInfo, isNew)
+    else
+        -- Все равно добавляем в processed, чтобы не спамить логами
+        processedPets[pet] = true
+        pet:SetAttribute("Processed", true)
+        print(string.format("⏭️ Пропущен (не в списке): %s", petInfo.Name))
+    end
 end
 
 -- ==========================================
@@ -252,6 +293,7 @@ local function ScanForPets()
     end
     
     local found = 0
+    local allowedFound = 0
     
     for _, child in ipairs(container:GetChildren()) do
         if string.match(child.Name, "^" .. Settings.PetPrefix) then
@@ -262,6 +304,7 @@ local function ScanForPets()
     
     if found > 0 then
         print(string.format("📊 Найдено %d петов", found))
+        print(string.format("📊 Разрешенные петы: %s", table.concat(Settings.AllowedPets, ", ")))
     end
     
     return found
@@ -307,6 +350,7 @@ local function StartMonitoring()
     end)
     
     print("✅ Мониторинг запущен!")
+    print(string.format("📋 Отслеживаются: %s", table.concat(Settings.AllowedPets, ", ")))
 end
 
 -- ==========================================
@@ -332,9 +376,11 @@ end
 -- Отправляем стартовое сообщение
 local startMessage = string.format(
     "🚀 **WildPet Tracker запущен!**\n" ..
+    "📋 **Отслеживаются:** `%s`\n" ..
     "🆔 **Job ID:** `%s`\n" ..
     "🔗 **Ссылка на сервер (TeleportService):**\n```lua\n%s\n```\n" ..
     "⏰ Время: %s",
+    table.concat(Settings.AllowedPets, ", "),
     jobId,
     serverLink,
     os.date("%H:%M:%S")
@@ -370,15 +416,53 @@ end
 getgenv().settings = function()
     print("📌 Настройки:")
     for k, v in pairs(Settings) do
-        print("  " .. k .. ": " .. tostring(v))
+        if k == "AllowedPets" then
+            print("  " .. k .. ": " .. table.concat(v, ", "))
+        else
+            print("  " .. k .. ": " .. tostring(v))
+        end
     end
+end
+
+getgenv().addpet = function(petName)
+    if not petName or petName == "" then
+        print("❌ Укажите имя пета: addpet('имя')")
+        return
+    end
+    table.insert(Settings.AllowedPets, string.lower(petName))
+    print(string.format("✅ Добавлен: %s", petName))
+    print(string.format("📋 Сейчас отслеживаются: %s", table.concat(Settings.AllowedPets, ", ")))
+end
+
+getgenv().removepet = function(petName)
+    if not petName or petName == "" then
+        print("❌ Укажите имя пета: removepet('имя')")
+        return
+    end
+    local lowerName = string.lower(petName)
+    for i, v in ipairs(Settings.AllowedPets) do
+        if string.lower(v) == lowerName then
+            table.remove(Settings.AllowedPets, i)
+            print(string.format("✅ Удален: %s", petName))
+            print(string.format("📋 Сейчас отслеживаются: %s", table.concat(Settings.AllowedPets, ", ")))
+            return
+        end
+    end
+    print(string.format("❌ Пет '%s' не найден в списке", petName))
 end
 
 print("===============================================")
 print("✅ ЗАПУЩЕНО!")
 print("")
+print("📋 Отслеживаются петы:")
+for i, pet in ipairs(Settings.AllowedPets) do
+    print(string.format("  %d. %s", i, pet))
+end
+print("")
 print("Команды:")
 print("  scan() - Принудительное сканирование")
 print("  server() - Показать ссылку на сервер")
 print("  settings() - Показать настройки")
+print("  addpet('имя') - Добавить пета в список")
+print("  removepet('имя') - Удалить пета из списка")
 print("===============================================")
