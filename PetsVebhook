@@ -1,0 +1,384 @@
+-- ==========================================
+-- WILDPET TRACKER - С ССЫЛКОЙ НА СЕРВЕР
+-- ==========================================
+
+local WebhookURL = "https://discord.com/api/webhooks/1518530776608538636/fjs6AZJwu0_DXDlIMHMfs0mk80f546RTiWqDTX01f0lDuTGZFIL-dyaFEbKvIqqWRFLU"
+
+-- ==========================================
+-- НАСТРОЙКИ
+-- ==========================================
+local Settings = {
+    ScanInterval = 3,
+    PetPrefix = "WildPet_",
+    ShowCurrentPets = true,
+}
+
+-- ==========================================
+-- ПОЛУЧЕНИЕ ССЫЛКИ НА СЕРВЕР
+-- ==========================================
+
+local function GetServerLink()
+    local placeId = game.PlaceId
+    local jobId = game.JobId
+    
+    if not jobId or jobId == "" then
+        return "Job ID не найден", "Неизвестно"
+    end
+    
+    -- Формируем ссылку как в твоем примере
+    local serverLink = string.format(
+        "game:GetService('TeleportService'):TeleportToPlaceInstance(%d, '%s', game.Players.LocalPlayer)",
+        placeId,
+        jobId
+    )
+    
+    return serverLink, jobId
+end
+
+-- ==========================================
+-- ПУТЬ К ПЕТАМ
+-- ==========================================
+
+local function GetPetContainer()
+    local workspace = game:GetService("Workspace")
+    local map = workspace:FindFirstChild("Map")
+    if not map then 
+        print("❌ Map not found")
+        return workspace 
+    end
+    
+    local wildPetSpawns = map:FindFirstChild("WildPetSpawns")
+    if not wildPetSpawns then 
+        print("❌ WildPetSpawns not found")
+        return workspace 
+    end
+    
+    return wildPetSpawns
+end
+
+-- ==========================================
+-- ОСНОВНЫЕ ФУНКЦИИ
+-- ==========================================
+
+local function SendToDiscord(message, embedData)
+    local http = game:GetService("HttpService")
+    
+    local payload = {}
+    if message then
+        payload.content = message
+    end
+    if embedData then
+        payload.embeds = embedData
+    end
+    
+    local jsonData = http:JSONEncode(payload)
+    
+    if request then
+        local response = request({
+            Url = WebhookURL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = jsonData
+        })
+        return response and (response.StatusCode == 200 or response.StatusCode == 204)
+    end
+    
+    if syn and syn.request then
+        local response = syn.request({
+            Url = WebhookURL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = jsonData
+        })
+        return response and (response.StatusCode == 200 or response.StatusCode == 204)
+    end
+    
+    if http_request then
+        local response = http_request({
+            Url = WebhookURL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = jsonData
+        })
+        return response and (response.StatusCode == 200 or response.StatusCode == 204)
+    end
+    
+    return false
+end
+
+local function ExtractPetInfo(modelName)
+    local nameMatch = string.match(modelName, "^WildPet_(.-)_WildPet_")
+    local idMatch = string.match(modelName, "_WildPet_([%x%-]+)$")
+    
+    return {
+        Name = nameMatch or "Unknown",
+        ID = idMatch or "Unknown"
+    }
+end
+
+local function GetPetPosition(pet)
+    local part = pet:FindFirstChild("PrimaryPart")
+    if not part then
+        part = pet:FindFirstChild("Head")
+    end
+    if not part then
+        part = pet:FindFirstChildWhichIsA("BasePart")
+    end
+    if not part then
+        for _, child in ipairs(pet:GetChildren()) do
+            if child:IsA("BasePart") then
+                part = child
+                break
+            end
+        end
+    end
+    return part and part.Position or nil
+end
+
+-- ==========================================
+-- ОТПРАВКА УВЕДОМЛЕНИЯ
+-- ==========================================
+
+local function SendPetNotification(pet, petInfo, isNew)
+    local pos = GetPetPosition(pet)
+    local posText = pos and string.format("X: %.1f, Y: %.1f, Z: %.1f", pos.X, pos.Y, pos.Z) or "Unknown"
+    
+    local serverLink, jobId = GetServerLink()
+    
+    local title = isNew and "🐰 НОВЫЙ PET ПОЯВИЛСЯ!" or "🐰 PET НАЙДЕН!"
+    local color = isNew and 0x00FF00 or 0x3498DB
+    
+    local embed = {{
+        title = title,
+        color = color,
+        fields = {
+            {
+                name = "Имя пета",
+                value = petInfo.Name,
+                inline = true
+            },
+            {
+                name = "ID пета",
+                value = "`" .. petInfo.ID .. "`",
+                inline = true
+            },
+            {
+                name = "Позиция",
+                value = posText,
+                inline = false
+            },
+            {
+                name = "🔗 Ссылка на сервер (TeleportService)",
+                value = "```lua\n" .. serverLink .. "\n```",
+                inline = false
+            },
+            {
+                name = "🆔 Job ID",
+                value = "`" .. jobId .. "`",
+                inline = false
+            },
+            {
+                name = "⏰ Время",
+                value = os.date("%H:%M:%S"),
+                inline = true
+            }
+        },
+        footer = {
+            text = "WildPet Tracker"
+        },
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%S.000Z")
+    }}
+    
+    local content = string.format(
+        "**%s**\n" ..
+        "🐰 Имя: **%s**\n" ..
+        "🔑 ID: `%s`\n" ..
+        "📍 Позиция: %s\n" ..
+        "━━━━━━━━━━━━━━━━━━━━━\n" ..
+        "🔗 **Ссылка на сервер (TeleportService):**\n```lua\n%s\n```\n" ..
+        "🆔 **Job ID:** `%s`\n" ..
+        "⏰ Время: %s",
+        title,
+        petInfo.Name,
+        petInfo.ID,
+        posText,
+        serverLink,
+        jobId,
+        os.date("%H:%M:%S")
+    )
+    
+    SendToDiscord(content, embed)
+    print(string.format("✅ Отправлено: %s (Job ID: %s)", petInfo.Name, jobId))
+end
+
+-- ==========================================
+-- ОБРАБОТКА ПЕТОВ
+-- ==========================================
+
+local processedPets = {}
+
+local function ProcessPet(pet, isNew)
+    if not pet or not pet.Name then
+        return
+    end
+    
+    if not string.match(pet.Name, "^" .. Settings.PetPrefix) then
+        return
+    end
+    
+    if processedPets[pet] then
+        return
+    end
+    
+    print(string.format("%s: %s", isNew and "🆕 Новый пет" or "📌 Пет", pet.Name))
+    
+    local petInfo = ExtractPetInfo(pet.Name)
+    print(string.format("📊 Имя: %s, ID: %s", petInfo.Name, petInfo.ID))
+    
+    processedPets[pet] = true
+    pet:SetAttribute("Processed", true)
+    
+    SendPetNotification(pet, petInfo, isNew)
+end
+
+-- ==========================================
+-- СКАНИРОВАНИЕ
+-- ==========================================
+
+local function ScanForPets()
+    local container = GetPetContainer()
+    if not container then
+        return
+    end
+    
+    local found = 0
+    
+    for _, child in ipairs(container:GetChildren()) do
+        if string.match(child.Name, "^" .. Settings.PetPrefix) then
+            ProcessPet(child, false)
+            found = found + 1
+        end
+    end
+    
+    if found > 0 then
+        print(string.format("📊 Найдено %d петов", found))
+    end
+    
+    return found
+end
+
+local function ScanForNewPets()
+    local container = GetPetContainer()
+    if not container then
+        return
+    end
+    
+    for _, child in ipairs(container:GetChildren()) do
+        if string.match(child.Name, "^" .. Settings.PetPrefix) then
+            if not processedPets[child] then
+                ProcessPet(child, true)
+            end
+        end
+    end
+end
+
+-- ==========================================
+-- МОНИТОРИНГ
+-- ==========================================
+
+local function StartMonitoring()
+    local container = GetPetContainer()
+    if not container then
+        print("❌ Не удалось запустить мониторинг")
+        return
+    end
+    
+    container.ChildAdded:Connect(function(child)
+        task.wait(0.5)
+        if string.match(child.Name, "^" .. Settings.PetPrefix) then
+            ProcessPet(child, true)
+        end
+    end)
+    
+    spawn(function()
+        while task.wait(Settings.ScanInterval) do
+            ScanForNewPets()
+        end
+    end)
+    
+    print("✅ Мониторинг запущен!")
+end
+
+-- ==========================================
+-- ЗАПУСК
+-- ==========================================
+
+print("===============================================")
+print("🐰 WILDPET TRACKER")
+print("===============================================")
+
+local serverLink, jobId = GetServerLink()
+print("🆔 Job ID: " .. jobId)
+print("🔗 Ссылка (TeleportService):")
+print(serverLink)
+
+local container = GetPetContainer()
+if container then
+    print("✅ Путь: Workspace.Map.WildPetSpawns")
+else
+    print("❌ Путь не найден!")
+end
+
+-- Отправляем стартовое сообщение
+local startMessage = string.format(
+    "🚀 **WildPet Tracker запущен!**\n" ..
+    "🆔 **Job ID:** `%s`\n" ..
+    "🔗 **Ссылка на сервер (TeleportService):**\n```lua\n%s\n```\n" ..
+    "⏰ Время: %s",
+    jobId,
+    serverLink,
+    os.date("%H:%M:%S")
+)
+
+SendToDiscord(startMessage)
+
+if Settings.ShowCurrentPets then
+    print("🔍 Сканирование текущих петов...")
+    task.wait(1)
+    ScanForPets()
+end
+
+print("🔍 Запуск мониторинга...")
+StartMonitoring()
+
+-- ==========================================
+-- КОМАНДЫ
+-- ==========================================
+
+getgenv().scan = function()
+    print("🔍 Принудительное сканирование...")
+    ScanForPets()
+end
+
+getgenv().server = function()
+    local link, job = GetServerLink()
+    print("🆔 Job ID: " .. job)
+    print("🔗 Ссылка (TeleportService):")
+    print(link)
+end
+
+getgenv().settings = function()
+    print("📌 Настройки:")
+    for k, v in pairs(Settings) do
+        print("  " .. k .. ": " .. tostring(v))
+    end
+end
+
+print("===============================================")
+print("✅ ЗАПУЩЕНО!")
+print("")
+print("Команды:")
+print("  scan() - Принудительное сканирование")
+print("  server() - Показать ссылку на сервер")
+print("  settings() - Показать настройки")
+print("===============================================")
